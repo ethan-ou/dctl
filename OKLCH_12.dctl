@@ -7,7 +7,7 @@
 #define EPS 1e-6f
 
 DEFINE_UI_PARAMS(OVERALL_SAT, Overall Sat, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
-DEFINE_UI_PARAMS(OVERALL_VAl, Overall Val, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 3.0, 0.001)
+DEFINE_UI_PARAMS(OVERALL_VAL, Overall Val, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 3.0, 0.001)
 
 DEFINE_UI_PARAMS(RED_HUE, Red Hue, DCTLUI_SLIDER_FLOAT, 0.0, -0.166, 0.166, 0.001)
 DEFINE_UI_PARAMS(RED_SAT, Red Sat, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
@@ -180,7 +180,12 @@ __DEVICE__ float interp_linear(__PRIVATE__ float2 *pts, int n_pts, float x) {
     }
 
     float t = (x - pts[i].x) / (pts[i + 1].x - pts[i].x);
+
     return _mix(pts[i].y, pts[i + 1].y, t);
+}
+
+__DEVICE__ float cross_mult(float primary, float secondary_1, float secondary_2) {
+  return 0.5f * primary + 0.25f * secondary_1 + 0.25f * secondary_2;
 }
 
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
@@ -205,23 +210,23 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
   float PIN_HUE_BIAS = 0.9154529372f;
 
   float2 hue_curve[N_POINTS] = {
-    {MAG_HUE_BIAS - 1.0f, MAG_HUE + MAG_HUE_BIAS - 1.0f},
-    {PIN_HUE_BIAS - 1.0f, PIN_HUE + PIN_HUE_BIAS - 1.0f},
-    {0.0f,                RED_HUE},
-    {ORA_HUE_BIAS,        ORA_HUE + ORA_HUE_BIAS},
-    {YEL_HUE_BIAS,        YEL_HUE + YEL_HUE_BIAS},
-    {LIM_HUE_BIAS,        LIM_HUE + LIM_HUE_BIAS},
-    {GRN_HUE_BIAS,        GRN_HUE + GRN_HUE_BIAS},
-    {TEA_HUE_BIAS,        TEA_HUE + TEA_HUE_BIAS},
-    {CYN_HUE_BIAS,        CYN_HUE + CYN_HUE_BIAS},
-    {LBL_HUE_BIAS,        LBL_HUE + LBL_HUE_BIAS},
-    {BLU_HUE_BIAS,        BLU_HUE + BLU_HUE_BIAS},
-    {PUR_HUE_BIAS,        PUR_HUE + PUR_HUE_BIAS},
-    {MAG_HUE_BIAS,        MAG_HUE + MAG_HUE_BIAS},
-    {PIN_HUE_BIAS,        PIN_HUE + PIN_HUE_BIAS},
-    {1.0f,                RED_HUE + 1.0f},
-    {ORA_HUE_BIAS + 1.0f, ORA_HUE + ORA_HUE_BIAS + 1.0f},
-    {YEL_HUE_BIAS + 1.0f, YEL_HUE + YEL_HUE_BIAS + 1.0f}
+    {MAG_HUE_BIAS - 1.0f, cross_mult(MAG_HUE, PUR_HUE, PIN_HUE) + MAG_HUE_BIAS - 1.0f},
+    {PIN_HUE_BIAS - 1.0f, cross_mult(PIN_HUE, MAG_HUE, RED_HUE) + PIN_HUE_BIAS - 1.0f},
+    {0.0f,                cross_mult(RED_HUE, PIN_HUE, ORA_HUE)},
+    {ORA_HUE_BIAS,        cross_mult(ORA_HUE, RED_HUE, YEL_HUE) + ORA_HUE_BIAS},
+    {YEL_HUE_BIAS,        cross_mult(YEL_HUE, ORA_HUE, LIM_HUE) + YEL_HUE_BIAS},
+    {LIM_HUE_BIAS,        cross_mult(LIM_HUE, YEL_HUE, GRN_HUE) + LIM_HUE_BIAS},
+    {GRN_HUE_BIAS,        cross_mult(GRN_HUE, LIM_HUE, TEA_HUE) + GRN_HUE_BIAS},
+    {TEA_HUE_BIAS,        cross_mult(TEA_HUE, GRN_HUE, CYN_HUE) + TEA_HUE_BIAS},
+    {CYN_HUE_BIAS,        cross_mult(CYN_HUE, TEA_HUE, LBL_HUE) + CYN_HUE_BIAS},
+    {LBL_HUE_BIAS,        cross_mult(LBL_HUE, CYN_HUE, BLU_HUE) + LBL_HUE_BIAS},
+    {BLU_HUE_BIAS,        cross_mult(BLU_HUE, LBL_HUE, PUR_HUE) + BLU_HUE_BIAS},
+    {PUR_HUE_BIAS,        cross_mult(PUR_HUE, BLU_HUE, MAG_HUE) + PUR_HUE_BIAS},
+    {MAG_HUE_BIAS,        cross_mult(MAG_HUE, PUR_HUE, PIN_HUE) + MAG_HUE_BIAS},
+    {PIN_HUE_BIAS,        cross_mult(PIN_HUE, MAG_HUE, RED_HUE) + PIN_HUE_BIAS},
+    {1.0f,                cross_mult(RED_HUE, PIN_HUE, ORA_HUE) + 1.0f},
+    {ORA_HUE_BIAS + 1.0f, cross_mult(ORA_HUE, RED_HUE, YEL_HUE) + ORA_HUE_BIAS + 1.0f},
+    {YEL_HUE_BIAS + 1.0f, cross_mult(YEL_HUE, ORA_HUE, LIM_HUE) + YEL_HUE_BIAS + 1.0f}
   };
 
   if (INVERT) {
@@ -231,50 +236,50 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
   }
 
   float2 sat_curve[N_POINTS] = {
-    {MAG_HUE_BIAS - 1.0f, MAG_SAT},
-    {PIN_HUE_BIAS - 1.0f, PIN_SAT},
-    {0.0f,                RED_SAT},
-    {ORA_HUE_BIAS,        ORA_SAT},
-    {YEL_HUE_BIAS,        YEL_SAT},
-    {LIM_HUE_BIAS,        LIM_SAT},
-    {GRN_HUE_BIAS,        GRN_SAT},
-    {TEA_HUE_BIAS,        TEA_SAT},
-    {CYN_HUE_BIAS,        CYN_SAT},
-    {LBL_HUE_BIAS,        LBL_SAT},
-    {BLU_HUE_BIAS,        BLU_SAT},
-    {PUR_HUE_BIAS,        PUR_SAT},
-    {MAG_HUE_BIAS,        MAG_SAT},
-    {PIN_HUE_BIAS,        PIN_SAT},
-    {1.0f,                RED_SAT},
-    {ORA_HUE_BIAS + 1.0f, ORA_SAT},
-    {YEL_HUE_BIAS + 1.0f, YEL_SAT}
+    {MAG_HUE_BIAS - 1.0f, cross_mult(MAG_SAT, PUR_SAT, PIN_SAT)},
+    {PIN_HUE_BIAS - 1.0f, cross_mult(PIN_SAT, MAG_SAT, RED_SAT)},
+    {0.0f,                cross_mult(RED_SAT, PIN_SAT, ORA_SAT)},
+    {ORA_HUE_BIAS,        cross_mult(ORA_SAT, RED_SAT, YEL_SAT)},
+    {YEL_HUE_BIAS,        cross_mult(YEL_SAT, ORA_SAT, LIM_SAT)},
+    {LIM_HUE_BIAS,        cross_mult(LIM_SAT, YEL_SAT, GRN_SAT)},
+    {GRN_HUE_BIAS,        cross_mult(GRN_SAT, LIM_SAT, TEA_SAT)},
+    {TEA_HUE_BIAS,        cross_mult(TEA_SAT, GRN_SAT, CYN_SAT)},
+    {CYN_HUE_BIAS,        cross_mult(CYN_SAT, TEA_SAT, LBL_SAT)},
+    {LBL_HUE_BIAS,        cross_mult(LBL_SAT, CYN_SAT, BLU_SAT)},
+    {BLU_HUE_BIAS,        cross_mult(BLU_SAT, LBL_SAT, PUR_SAT)},
+    {PUR_HUE_BIAS,        cross_mult(PUR_SAT, BLU_SAT, MAG_SAT)},
+    {MAG_HUE_BIAS,        cross_mult(MAG_SAT, PUR_SAT, PIN_SAT)},
+    {PIN_HUE_BIAS,        cross_mult(PIN_SAT, MAG_SAT, RED_SAT)},
+    {1.0f,                cross_mult(RED_SAT, PIN_SAT, ORA_SAT)},
+    {ORA_HUE_BIAS + 1.0f, cross_mult(ORA_SAT, RED_SAT, YEL_SAT)},
+    {YEL_HUE_BIAS + 1.0f, cross_mult(YEL_SAT, ORA_SAT, LIM_SAT)}
   };
 
   float2 val_curve[N_POINTS] = {
-    {MAG_HUE_BIAS - 1.0f, MAG_VAL},
-    {PIN_HUE_BIAS - 1.0f, PIN_VAL},
-    {0.0f,                RED_VAL},
-    {ORA_HUE_BIAS,        ORA_VAL},
-    {YEL_HUE_BIAS,        YEL_VAL},
-    {LIM_HUE_BIAS,        LIM_VAL},
-    {GRN_HUE_BIAS,        GRN_VAL},
-    {TEA_HUE_BIAS,        TEA_VAL},
-    {CYN_HUE_BIAS,        CYN_VAL},
-    {LBL_HUE_BIAS,        LBL_VAL},
-    {BLU_HUE_BIAS,        BLU_VAL},
-    {PUR_HUE_BIAS,        PUR_VAL},
-    {MAG_HUE_BIAS,        MAG_VAL},
-    {PIN_HUE_BIAS,        PIN_VAL},
-    {1.0f,                RED_VAL},
-    {ORA_HUE_BIAS + 1.0f, ORA_VAL},
-    {YEL_HUE_BIAS + 1.0f, YEL_VAL}
+    {MAG_HUE_BIAS - 1.0f, cross_mult(MAG_VAL, PUR_VAL, PIN_VAL)},
+    {PIN_HUE_BIAS - 1.0f, cross_mult(PIN_VAL, MAG_VAL, RED_VAL)},
+    {0.0f,                cross_mult(RED_VAL, PIN_VAL, ORA_VAL)},
+    {ORA_HUE_BIAS,        cross_mult(ORA_VAL, RED_VAL, YEL_VAL)},
+    {YEL_HUE_BIAS,        cross_mult(YEL_VAL, ORA_VAL, LIM_VAL)},
+    {LIM_HUE_BIAS,        cross_mult(LIM_VAL, YEL_VAL, GRN_VAL)},
+    {GRN_HUE_BIAS,        cross_mult(GRN_VAL, LIM_VAL, TEA_VAL)},
+    {TEA_HUE_BIAS,        cross_mult(TEA_VAL, GRN_VAL, CYN_VAL)},
+    {CYN_HUE_BIAS,        cross_mult(CYN_VAL, TEA_VAL, LBL_VAL)},
+    {LBL_HUE_BIAS,        cross_mult(LBL_VAL, CYN_VAL, BLU_VAL)},
+    {BLU_HUE_BIAS,        cross_mult(BLU_VAL, LBL_VAL, PUR_VAL)},
+    {PUR_HUE_BIAS,        cross_mult(PUR_VAL, BLU_VAL, MAG_VAL)},
+    {MAG_HUE_BIAS,        cross_mult(MAG_VAL, PUR_VAL, PIN_VAL)},
+    {PIN_HUE_BIAS,        cross_mult(PIN_VAL, MAG_VAL, RED_VAL)},
+    {1.0f,                cross_mult(RED_VAL, PIN_VAL, ORA_VAL)},
+    {ORA_HUE_BIAS + 1.0f, cross_mult(ORA_VAL, RED_VAL, YEL_VAL)},
+    {YEL_HUE_BIAS + 1.0f, cross_mult(YEL_VAL, ORA_VAL, LIM_VAL)}
   };
 
   float hue_result = interp_linear(hue_curve, N_POINTS, hue);
   float hue_switch = INVERT ? hue : hue_result;
 
   float sat_factor = interp_linear(sat_curve, N_POINTS, hue_switch) * OVERALL_SAT;
-  float val_factor = interp_linear(val_curve, N_POINTS, hue_switch) + OVERALL_VAl;
+  float val_factor = interp_linear(val_curve, N_POINTS, hue_switch) + OVERALL_VAL;
 
   if (!INVERT) {
       sat_factor = 1.0f / sat_factor;
@@ -287,9 +292,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
   float val_result;
 
   if (INVERT) {
-      val_result = val / val_factor;
+      val_result = val / spow(val_factor, val);
   } else {
-      val_result = val * val_factor;
+      val_result = val * spow(val_factor, val);
   }
 
   rgb = mod_oklch_to_oklab(make_float3(val_result, sat_result, hue_result));
