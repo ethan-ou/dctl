@@ -1,0 +1,64 @@
+DEFINE_UI_PARAMS(middle_grey, Middle Grey, DCTLUI_SLIDER_FLOAT, 0.41, 0.01, 1.0, 0.001)
+DEFINE_UI_PARAMS(contrast, Contrast, DCTLUI_SLIDER_FLOAT, 1.0, 0.1, 2.5, 0.001)
+DEFINE_UI_PARAMS(skew, Skew, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(display_white_target, White Target, DCTLUI_SLIDER_FLOAT, 100.0, 20.0, 400.0, 0.001)
+DEFINE_UI_PARAMS(display_black_target, Black Target, DCTLUI_SLIDER_FLOAT, 0.0152, 0.0, 15.0, 0.001)
+
+#define MIDDLE_GREY_LIN 0.1845f
+
+__DEVICE__ float sigmoid(float value, float magnitude, float paper_exp, float film_fog, float film_power, float paper_power)
+{
+  float clamped_value = _fmaxf(value, 0.0f);
+  // The following equation can be derived as a model for film + paper but it has a pole at 0
+  // magnitude * powf(1.0f + paper_exp * powf(film_fog + value, -film_power), -paper_power);
+  // Rewritten on a stable around zero form:
+  float film_response = _powf(film_fog + clamped_value, film_power);
+  float paper_response = magnitude * _powf(film_response / (paper_exp + film_response), paper_power);
+
+  // Safety check for very large floats that cause numerical errors
+  return isnan(paper_response) ? magnitude : paper_response;
+}
+
+__DEVICE__ float3 apply_sigmoid(float3 value, float contrast, float skew, float display_white_target, float display_black_target)
+{
+  // Calculate a reference slope for no skew and a normalized display
+  float ref_paper_power = 1.0f;
+  float ref_magnitude = 1.0f;
+  float ref_film_fog = 0.0f;
+  float ref_paper_exposure = _powf(ref_film_fog + MIDDLE_GREY_LIN, contrast) * ((ref_magnitude / MIDDLE_GREY_LIN) - 1.0f);
+  float delta = 1e-6f;
+  float ref_slope = (sigmoid(MIDDLE_GREY_LIN + delta, ref_magnitude, ref_paper_exposure, ref_film_fog, contrast, ref_paper_power) -
+                     sigmoid(MIDDLE_GREY_LIN - delta, ref_magnitude, ref_paper_exposure, ref_film_fog, contrast, ref_paper_power)) /
+                    2.0f / delta;
+
+  float paper_power = _powf(5.0f, -skew);
+
+  float temp_film_power = 1.0f;
+  float temp_white_target = 0.01f * display_white_target;
+  float temp_white_grey_relation = _powf(temp_white_target / MIDDLE_GREY_LIN, 1.0f / paper_power) - 1.0f;
+  float temp_paper_exposure = _powf(MIDDLE_GREY_LIN, temp_film_power) * temp_white_grey_relation;
+  float temp_slope = (sigmoid(MIDDLE_GREY_LIN + delta, temp_white_target, temp_paper_exposure, ref_film_fog, temp_film_power, paper_power) -
+                      sigmoid(MIDDLE_GREY_LIN - delta, temp_white_target, temp_paper_exposure, ref_film_fog, temp_film_power, paper_power)) /
+                     2.0f / delta;
+
+  float film_power = ref_slope / temp_slope;
+  float white_target = 0.01f * display_white_target;
+  float black_target = 0.01f * display_black_target;
+  float white_grey_relation = _powf(white_target / MIDDLE_GREY_LIN, 1.0f / paper_power) - 1.0f;
+  float white_black_relation = _powf(black_target / white_target, -1.0f / paper_power) - 1.0f;
+  float film_fog = MIDDLE_GREY_LIN * _powf(white_grey_relation, 1.0f / film_power) / (powf(white_black_relation, 1.0f / film_power) - powf(white_grey_relation, 1.0f / film_power));
+  float paper_exposure = _powf(film_fog + MIDDLE_GREY_LIN, film_power) * white_grey_relation;
+
+  return make_float3(sigmoid(value.x, white_target, paper_exposure, film_fog, film_power, paper_power),
+                     sigmoid(value.y, white_target, paper_exposure, film_fog, film_power, paper_power),
+                     sigmoid(value.z, white_target, paper_exposure, film_fog, film_power, paper_power));
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
+{
+  float3 rgb = make_float3(p_R, p_G, p_B);
+  float gain = middle_grey / MIDDLE_GREY_LIN;
+  rgb = apply_sigmoid(rgb * gain, contrast, skew, display_white_target, display_black_target);
+
+  return rgb;
+}

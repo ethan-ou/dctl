@@ -1,0 +1,596 @@
+#define M_PI_F 3.14159265358979323846f
+
+DEFINE_UI_PARAMS(CHROMA, Global Chroma, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(shadows, Shadows, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(midtones, Midtones, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(highlights, Highlights, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(SPACE, Colour Space, DCTLUI_COMBO_BOX, 0, {HCB, YCH}, {Darktable HCB(2022), YCH})
+
+__DEVICE__ float dt_fast_hypot(float x, float y)
+{
+  return _sqrtf(x * x + y * y);
+}
+
+// XYZ -> sRGB matrix, D65
+__DEVICE__ float3 XYZ_to_sRGB(float3 XYZ)
+{
+  return make_float3(
+      3.1338561f * XYZ.x - 1.6168667f * XYZ.y - 0.4906146f * XYZ.z,
+      -0.9787684f * XYZ.x + 1.9161415f * XYZ.y + 0.0334540f * XYZ.z,
+      0.0719453f * XYZ.x - 0.2289914f * XYZ.y + 1.4052427f * XYZ.z);
+}
+
+// sRGB -> XYZ matrix, D65
+__DEVICE__ float3 sRGB_to_XYZ(float3 sRGB)
+{
+  return make_float3(
+      0.4360747f * sRGB.x + 0.3850649f * sRGB.y + 0.1430804f * sRGB.z,
+      0.2225045f * sRGB.x + 0.7168786f * sRGB.y + 0.0606169f * sRGB.z,
+      0.0139322f * sRGB.x + 0.0971045f * sRGB.y + 0.7141733f * sRGB.z);
+}
+
+// Convert CIE 1931 2° XYZ D65 to CIE 2006 LMS D65 (cone space)
+/*
+ * The CIE 1931 XYZ 2° observer D65 is converted to CIE 2006 LMS D65 using the approximation by
+ * Richard A. Kirk, Chromaticity coordinates for graphic arts based on CIE 2006 LMS
+ * with even spacing of Munsell colours
+ * https://doi.org/10.2352/issn.2169-2629.2019.27.38
+ */
+
+__DEVICE__ float3 XYZ_to_LMS(float3 XYZ)
+{
+  return make_float3(
+      0.257085f * XYZ.x + 0.859943f * XYZ.y + -0.031061f * XYZ.z,
+      -0.394427f * XYZ.x + 1.175800f * XYZ.y + 0.106423f * XYZ.z,
+      0.064856f * XYZ.x + -0.076250f * XYZ.y + 0.559067f * XYZ.z);
+}
+
+__DEVICE__ float3 LMS_to_XYZ(float3 LMS)
+{
+  return make_float3(
+      1.80794659f * LMS.x + -1.29971660f * LMS.y + 0.34785879f * LMS.z,
+      0.61783960f * LMS.x + 0.39595453f * LMS.y + -0.04104687f * LMS.z,
+      -0.12546960f * LMS.x + 0.20478038f * LMS.y + 1.74274183f * LMS.z);
+}
+
+/*
+ * Convert from CIE 2006 LMS D65 to Filmlight RGB defined in
+ * Richard A. Kirk, Chromaticity coordinates for graphic arts based on CIE 2006 LMS
+ * with even spacing of Munsell colours
+ * https://doi.org/10.2352/issn.2169-2629.2019.27.38
+ */
+
+__DEVICE__ float3 gradingRGB_to_LMS(float3 RGB)
+{
+  return make_float3(
+      0.95f * RGB.x + 0.38f * RGB.y + 0.00f * RGB.z,
+      0.05f * RGB.x + 0.62f * RGB.y + 0.03f * RGB.z,
+      0.00f * RGB.x + 0.00f * RGB.y + 0.97f * RGB.z);
+}
+
+__DEVICE__ float3 LMS_to_gradingRGB(float3 LMS)
+{
+  return make_float3(
+      1.0877193f * LMS.x + -0.66666667f * LMS.y + 0.02061856f * LMS.z,
+      -0.0877193f * LMS.x + 1.66666667f * LMS.y + -0.05154639f * LMS.z,
+      0.00f * LMS.x + 0.00f * LMS.y + 1.03092784f * LMS.z);
+}
+
+/*
+ * Re-express the Filmlight RGB triplet as Yrg luminance/chromacity coordinates
+ */
+
+__DEVICE__ float3 LMS_to_Yrg(float3 LMS)
+{
+  // compute luminance
+  float Y = 0.68990272f * LMS.x + 0.34832189f * LMS.y;
+  // normalize LMS
+  float a = LMS.x + LMS.y + LMS.z;
+  float3 lms = (a == 0.0f) ? make_float3(0.f, 0.f, 0.f) : LMS / a;
+
+  // convert to Filmlight rgb (normalized)
+  float3 rgb = LMS_to_gradingRGB(lms);
+  return make_float3(Y, rgb.x, rgb.y);
+}
+
+__DEVICE__ float3 Yrg_to_LMS(float3 Yrg)
+{
+  float Y = Yrg.x;
+
+  // reform rgb (normalized) from chroma
+  float r = Yrg.y;
+  float g = Yrg.z;
+  float b = 1.f - r - g;
+  float3 rgb = make_float3(r, g, b);
+
+  // convert to lms (normalized)
+  float3 lms = gradingRGB_to_LMS(rgb);
+
+  // denormalize to LMS
+  float denom = (0.68990272f * lms.x + 0.34832189f * lms.y);
+  float3 a = (denom == 0.f) ? make_float3(0.f, 0.f, 0.f) : make_float3(Y / denom, Y / denom, Y / denom);
+  return lms * a;
+}
+
+/*
+ * Re-express Filmlight Yrg in polar coordinates Ych
+ *
+ * Note that we don't explicitly store the hue angle
+ * but rather just the cosine and sine of the angle.
+ * This is because we don't need the hue angle anywhere
+ * and this way we can avoid calculating expensive
+ * trigonometric functions.
+ */
+
+__DEVICE__ float4 Yrg_to_Ych(float3 Yrg)
+{
+  float Y = Yrg.x;
+  // Subtract white point. These are the r, g coordinates of
+  // sRGB (D50 adapted) (1, 1, 1) taken through
+  // XYZ D50 -> CAT16 D50->D65 adaptation -> LMS 2006
+  // -> grading RGB conversion.
+  float r = Yrg.y - 0.21902143f;
+  float g = Yrg.z - 0.54371398f;
+  float c = dt_fast_hypot(g, r);
+  float cos_h = c != 0.f ? r / c : 1.f;
+  float sin_h = c != 0.f ? g / c : 0.f;
+  return make_float4(Y, c, cos_h, sin_h);
+}
+
+__DEVICE__ float3 Ych_to_Yrg(float4 Ych)
+{
+  float Y = Ych.x;
+  float c = Ych.y;
+  float cos_h = Ych.z;
+  float sin_h = Ych.w;
+  float r = c * cos_h + 0.21902143f;
+  float g = c * sin_h + 0.54371398f;
+  return make_float3(Y, r, g);
+}
+
+__DEVICE__ float4 gamut_check_Yrg(float4 Ych)
+{
+  // Do a test conversion to Yrg
+  float3 Yrg = Ych_to_Yrg(Ych);
+
+  // Gamut-clip in Yrg at constant hue and luminance
+  // e.g. find the max chroma value that fits in gamut at the current hue
+  float D65_r = 0.21902143f;
+  float D65_g = 0.54371398f;
+  float max_c = Ych.y;
+  float cos_h = Ych.z;
+  float sin_h = Ych.w;
+
+  if (Yrg.y < 0.f)
+  {
+    max_c = _fminf(-D65_r / cos_h, max_c);
+  }
+  if (Yrg.z < 0.f)
+  {
+    max_c = _fminf(-D65_g / sin_h, max_c);
+  }
+  if (Yrg.y + Yrg.z > 1.f)
+  {
+    max_c = _fminf((1.f - D65_r - D65_g) / (cos_h + sin_h), max_c);
+  }
+
+  // Overwrite chroma with the sanitized value and
+  Ych.y = max_c;
+
+  return Ych;
+}
+
+__DEVICE__ inline float sqf(float x)
+{
+  return x * x;
+}
+
+__DEVICE__ float3 opacity_masks(float x, float shadows_weight, float highlights_weight, float midtones_weight, float mask_grey_fulcrum)
+{
+  float x_offset = (x - mask_grey_fulcrum);
+  float x_offset_norm = x_offset / mask_grey_fulcrum;
+  float alpha = 1.f / (1.f + _expf(x_offset_norm * shadows_weight));    // opacity of shadows
+  float beta = 1.f / (1.f + _expf(-x_offset_norm * highlights_weight)); // opacity of highlights
+  float alpha_comp = 1.f - alpha;
+  float beta_comp = 1.f - beta;
+  float gamma = _expf(-sqf(x_offset) * midtones_weight / 4.f) * sqf(alpha_comp) * sqf(beta_comp) * 8.f; // opacity of midtones
+  float gamma_comp = 1.f - gamma;
+
+  return make_float3(alpha, gamma, beta);
+}
+
+__DEVICE__ float scalar_product(float3 v1, float3 v2)
+{
+  float acc = 0.f;
+  acc += v1.x * v2.x;
+  acc += v1.y * v2.y;
+  acc += v1.z * v2.z;
+
+  return acc;
+}
+
+// DARKTABLE UCS
+__DEVICE__ float3 dt_D65_XYZ_to_xyY(float3 sXYZ)
+{
+  // see cpu implementation for details, use D65_xy as fallback
+  float3 XYZ = make_float3(_fmaxf(0.0f, sXYZ.x), _fmaxf(0.0f, sXYZ.y), _fmaxf(0.0f, sXYZ.z));
+  float3 xyY;
+  float sum = XYZ.x + XYZ.y + XYZ.z;
+  if (sum > 0.0f)
+  {
+    xyY.x = XYZ.x / sum;
+    xyY.y = XYZ.y / sum;
+  }
+  else
+  {
+    xyY.x = 0.31271f;
+    xyY.y = 0.32902f;
+  }
+
+  xyY.z = XYZ.y;
+
+  return xyY;
+}
+
+__DEVICE__ float3 dt_xyY_to_XYZ(float3 xyY)
+{
+  // see cpu implementation for details
+  float3 XYZ = make_float3(0.0f, 0.0f, 0.0f);
+  if (xyY.y != 0.0f)
+  {
+    XYZ.x = xyY.z * xyY.x / xyY.y;
+    XYZ.y = xyY.z;
+    XYZ.z = xyY.z * (1.f - xyY.x - xyY.y) / xyY.y;
+  }
+
+  return XYZ;
+}
+
+/** The following is darktable Uniform Color Space 2022
+ * © Aurélien Pierre
+ * https://eng.aurelienpierre.com/2022/02/color-saturation-control-for-the-21th-century/
+ *
+ * Use this space for color-grading in a perceptual framework.
+ * The CAM terms have been removed for performance.
+ **/
+#define DT_UCS_L_STAR_RANGE 2.098883786377f
+#define DT_UCS_L_STAR_UPPER_LIMIT 2.09885f
+#define DT_UCS_Y_UPPER_LIMIT 1e8f
+
+__DEVICE__ float Y_to_dt_UCS_L_star(float Y)
+{
+  float Y_hat = _powf(Y, 0.631651345306265f);
+  return DT_UCS_L_STAR_RANGE * Y_hat / (Y_hat + 1.12426773749357f);
+}
+
+__DEVICE__ float dt_UCS_L_star_to_Y(float L_star)
+{
+  return _powf((1.12426773749357f * L_star / (DT_UCS_L_STAR_RANGE - L_star)), 1.5831518565279648f);
+}
+
+__DEVICE__ float2 xyY_to_dt_UCS_UV(float3 xyY)
+{
+  float3 x_factors = make_float3(-0.783941002840055f, 0.745273540913283f, 0.318707282433486f);
+  float3 y_factors = make_float3(0.277512987809202f, -0.205375866083878f, 2.16743692732158f);
+  float3 offsets = make_float3(0.153836578598858f, -0.165478376301988f, 0.291320554395942f);
+
+  float3 UVD = x_factors * xyY.x + y_factors * xyY.y + offsets;
+  float div = UVD.z >= 0.0f ? _fmaxf(0.0f, UVD.z) : _fminf(-0.0f, UVD.z);
+
+  UVD.x /= div;
+  UVD.y /= div;
+
+  float2 factors = make_float2(1.39656225667f, 1.4513954287f);
+  float2 half_values = make_float2(1.49217352929f, 1.52488637914f);
+  float2 UV_star = make_float2(factors.x * UVD.x / (_fabs(UVD.x) + half_values.x), factors.y * UVD.y / (_fabs(UVD.y) + half_values.y));
+  // The following is equivalent to a 2D matrix product
+
+  float2 UV_star_prime = make_float2(-1.124983854323892f * UV_star.x - 0.980483721769325f * UV_star.y, 1.86323315098672f * UV_star.x + 1.971853092390862f * UV_star.y);
+  return UV_star_prime;
+}
+
+__DEVICE__ float3 xyY_to_dt_UCS_JCH(float3 xyY, float L_white)
+{
+  /*
+    input :
+      * xyY in normalized CIE XYZ for the 2° 1931 observer adapted for D65
+      * L_white the lightness of white as dt UCS L* lightness
+      * cz = 1 for standard pre-print proofing conditions with average surround and n = 20 %
+              (background = middle grey, white = perfect diffuse white)
+    range : xy in [0; 1], Y normalized for perfect diffuse white = 1
+  */
+
+  float2 UV_star_prime = xyY_to_dt_UCS_UV(xyY);
+
+  // Y upper limit is calculated from the L star upper limit.
+  float L_star = Y_to_dt_UCS_L_star(_clampf(xyY.z, 0.f, DT_UCS_Y_UPPER_LIMIT));
+  float M2 = UV_star_prime.x * UV_star_prime.x + UV_star_prime.y * UV_star_prime.y; // square of colorfulness M
+
+  // should be JCH[0] = powf(L_star / L_white), cz) but we treat only the case where cz = 1
+  float3 JCH = make_float3(L_star / L_white,
+                           15.932993652962535f * _powf(L_star, 0.6523997524738018f) * _powf(M2, 0.6007557017508491f) / L_white,
+                           _atan2f(UV_star_prime.y, UV_star_prime.x));
+  return JCH;
+}
+
+__DEVICE__ float3 dt_UCS_JCH_to_xyY(float3 JCH, float L_white)
+{
+  /*
+    input :
+      * xyY in normalized CIE XYZ for the 2° 1931 observer adapted for D65
+      * L_white the lightness of white as dt UCS L* lightness
+      * cz = 1 for standard pre-print proofing conditions with average surround and n = 20 %
+              (background = middle grey, white = perfect diffuse white)
+    range : xy in [0; 1], Y normalized for perfect diffuse white = 1
+  */
+
+  // should be L_star = powf(JCH[0], 1.f / cz) * L_white but we treat only the case where cz = 1
+  // L_star upper limit is 2.098883786377 truncated to 32-bit float and last decimal removed.
+  // By clipping L_star to this limit, we ensure dt_UCS_L_star_to_Y() doesn't divide by zero.
+  // Instead of using above theoretical values we use some modified versions
+  // that not avoid div-by-zero but div-by-close-to-zero
+  // this leads to more stability for extremely bright parts as we avoid single float precision overflows
+  float L_star = _clampf(JCH.x * L_white, 0.f, DT_UCS_L_STAR_UPPER_LIMIT);
+  float M = L_star != 0.f
+                ? _powf(JCH.y * L_white / (15.932993652962535f * _powf(L_star, 0.6523997524738018f)), 0.8322850678616855f)
+                : 0.f;
+
+  float U_star_prime = M * _cosf(JCH.z);
+  float V_star_prime = M * _sinf(JCH.z);
+
+  // The following is equivalent to a 2D matrix product
+  float2 UV_star = make_float2(-5.037522385190711f * U_star_prime - 2.504856328185843f * V_star_prime,
+                               4.760029407436461f * U_star_prime + 2.874012963239247f * V_star_prime);
+
+  float2 factors = make_float2(1.39656225667f, 1.4513954287f);
+  float2 half_values = make_float2(1.49217352929f, 1.52488637914f);
+  float2 UV = make_float2(-half_values.x * UV_star.x / (_fabs(UV_star.x) - factors.x),
+                          -half_values.y * UV_star.y / (_fabs(UV_star.y) - factors.y));
+
+  float3 U_factors = make_float3(0.167171472114775f, -0.150959086409163f, 0.940254742367256f);
+  float3 V_factors = make_float3(0.141299802443708f, -0.155185060382272f, 1.000000000000000f);
+  float3 offsets = make_float3(-0.00801531300850582f, -0.00843312433578007f, -0.0256325967652889f);
+
+  float3 xyD = U_factors * UV.x + V_factors * UV.y + offsets;
+
+  float div = (xyD.z >= 0.0f) ? _fmaxf(0.0f, xyD.z) : _fminf(-0.0f, xyD.z);
+  float3 xyY = make_float3(xyD.x / div, xyD.y / div, dt_UCS_L_star_to_Y(L_star));
+  return xyY;
+}
+
+__DEVICE__ float3 dt_UCS_JCH_to_HSB(float3 JCH)
+{
+  float3 HSB;
+  HSB.z = JCH.x * (_powf(JCH.y, 1.33654221029386f) + 1.f);
+  HSB.y = (HSB.z > 0.f) ? JCH.y / HSB.z : 0.f;
+  HSB.x = JCH.z;
+  return HSB;
+}
+
+__DEVICE__ float3 dt_UCS_HSB_to_JCH(float3 HSB)
+{
+  float3 JCH;
+  JCH.z = HSB.x;
+  JCH.y = HSB.y * HSB.z;
+  JCH.x = HSB.z / (_powf(JCH.y, 1.33654221029386f) + 1.f);
+  return JCH;
+}
+
+__DEVICE__ float3 dt_UCS_JCH_to_HCB(float3 JCH)
+{
+  float3 HCB;
+  HCB.z = JCH.x * (_powf(JCH.y, 1.33654221029386f) + 1.f);
+  HCB.y = JCH.y;
+  HCB.x = JCH.z;
+  return HCB;
+}
+
+__DEVICE__ float3 dt_UCS_HCB_to_JCH(float3 HCB)
+{
+  float3 JCH;
+  JCH.z = HCB.x;
+  JCH.y = HCB.y;
+  JCH.x = HCB.z / (_powf(HCB.y, 1.33654221029386f) + 1.f);
+  return JCH;
+}
+
+__DEVICE__ float3 dt_UCS_LUV_to_JCH(float L_star, float L_white, float2 UV_star_prime)
+{
+  float M2 = UV_star_prime.x * UV_star_prime.x + UV_star_prime.y * UV_star_prime.y; // square of colorfulness M
+  float3 JCH = make_float3(L_star / L_white,
+                           15.932993652962535f * _powf(L_star, 0.6523997524738018f) * _powf(M2, 0.6007557017508491f) / L_white,
+                           _atan2f(UV_star_prime.y, UV_star_prime.x));
+  return JCH;
+}
+
+__DEVICE__ float soft_clip(float x, float soft_threshold, float hard_threshold)
+{
+  // use an exponential soft clipping above soft_threshold
+  // hard threshold must be > soft threshold
+  float norm = hard_threshold - soft_threshold;
+  return (x > soft_threshold) ? soft_threshold + (1.f - _expf(-(x - soft_threshold) / norm)) * norm : x;
+}
+
+#define LUT_ELEM 360 // gamut LUT number of elements: resolution of 1°
+
+__DEVICE__ float lookup_gamut(float *gamut_lut, float x)
+{
+  // WARNING : x should be between [-pi ; pi ], which is the default output of _atan2f anyway
+
+  // convert in LUT coordinate
+  float x_test = (LUT_ELEM - 1) * (x + M_PI_F) / (2.f * M_PI_F);
+
+  // find the 2 closest integer coordinates (next/previous)
+  float x_prev = _floor(x_test);
+  float x_next = _ceil(x_test);
+
+  // get the 2 closest LUT elements at integer coordinates
+  // cycle on the hue ring if out of bounds
+  int xi = (int)x_prev;
+  if (xi < 0)
+    xi = LUT_ELEM - 1;
+  else if (xi > LUT_ELEM - 1)
+    xi = 0;
+
+  int xii = (int)x_next;
+  if (xii < 0)
+    xii = LUT_ELEM - 1;
+  else if (xii > LUT_ELEM - 1)
+    xii = 0;
+
+  // fetch the corresponding y values
+  float y_prev = gamut_lut[xi];
+
+  // return y_prev if we are on the same integer LUT element or do linear interpolation
+  return y_prev + ((xi != xii) ? (x_test - x_prev) * (gamut_lut[xii] - y_prev) : 0.0f);
+}
+
+__DEVICE__ static inline float dt_fast_hypotf(float x, float y)
+{
+  return _sqrtf(x * x + y * y);
+}
+
+#define MASK_GREY_FULCRUM 0.1845f
+#define SHADOWS_WEIGHT 1.f
+#define HIGHLIGHTS_WEIGHT 1.0f
+__CONSTANT__ float gamut_LUT[360] = {
+    0.01103283, 0.01096559, 0.01090244, 0.01084332, 0.01078809,
+    0.01073671, 0.01068902, 0.01064501, 0.01060461, 0.0105677,
+    0.01053427, 0.01050422, 0.01047753, 0.01045418, 0.0104341,
+    0.01041726, 0.01040365, 0.01039325, 0.01038603, 0.01038199,
+    0.01038111, 0.01038341, 0.01038887, 0.01039752, 0.01040936,
+    0.01042441, 0.01044271, 0.01046425, 0.01048909, 0.01051726,
+    0.01054881, 0.0105838, 0.0106223, 0.01066431, 0.01070998,
+    0.01075928, 0.01081239, 0.01086931, 0.01093024, 0.01099525,
+    0.01106442, 0.01113783, 0.01121576, 0.01129823, 0.0113853,
+    0.01147735, 0.01157452, 0.01167695, 0.01178479, 0.01189835,
+    0.01201764, 0.0121434, 0.01227548, 0.01241406, 0.01256006,
+    0.01271332, 0.01287437, 0.01304352, 0.01322141, 0.01340812,
+    0.0136047, 0.01381129, 0.01402838, 0.01425727, 0.01449822,
+    0.01475187, 0.01501939, 0.01530113, 0.01559894, 0.01591334,
+    0.01624596, 0.01659807, 0.01697102, 0.01736703, 0.01778713,
+    0.01823393, 0.0187096, 0.01921654, 0.0197584, 0.02033838,
+    0.02096007, 0.02162754, 0.02234665, 0.02312297, 0.02396283,
+    0.0248752, 0.02586723, 0.02695083, 0.02814031, 0.02944853,
+    0.03089547, 0.0325058, 0.03430409, 0.03632699, 0.0386212,
+    0.04124274, 0.04426925, 0.04780478, 0.0519781, 0.05700699,
+    0.05910492, 0.05788727, 0.05673328, 0.05563778, 0.05459784,
+    0.0536077, 0.05266812, 0.05177262, 0.05092078, 0.0501096,
+    0.0493364, 0.04859986, 0.0478986, 0.04722956, 0.04659097,
+    0.04598273, 0.04540242, 0.0448293, 0.04417159, 0.04343099,
+    0.04262117, 0.0417591, 0.04089199, 0.04007221, 0.03929827,
+    0.03856648, 0.03787432, 0.0372181, 0.03659709, 0.0360081,
+    0.03544889, 0.03491846, 0.03441484, 0.03393626, 0.03348194,
+    0.03304994, 0.03263926, 0.03224896, 0.03187814, 0.03152566,
+    0.03119075, 0.0308727, 0.0305708, 0.03028417, 0.03001245,
+    0.02975484, 0.02951099, 0.0292802, 0.02906201, 0.02885627,
+    0.02866237, 0.02848003, 0.02830872, 0.02814842, 0.02799856,
+    0.02785909, 0.02772968, 0.02761005, 0.02750005, 0.02739951,
+    0.02730829, 0.02722612, 0.02715295, 0.02708864, 0.02703308,
+    0.02698619, 0.02694791, 0.02691814, 0.02689687, 0.02688403,
+    0.02687963, 0.02688365, 0.02689609, 0.02691698, 0.02694636,
+    0.02698427, 0.02703076, 0.02708594, 0.02714989, 0.02722269,
+    0.02730444, 0.02739533, 0.02749549, 0.02760517, 0.02772436,
+    0.02785347, 0.0279926, 0.02814213, 0.02830214, 0.02847307,
+    0.02865512, 0.02884877, 0.02905426, 0.02927215, 0.02950267,
+    0.02974644, 0.03000394, 0.03027542, 0.03056211, 0.03086383,
+    0.03053059, 0.0290978, 0.02784185, 0.02672645, 0.02572739,
+    0.02482429, 0.02400313, 0.02325285, 0.02256343, 0.02192813,
+    0.02134, 0.02079409, 0.02028607, 0.01981263, 0.01936937,
+    0.01895428, 0.01856508, 0.01819887, 0.01785471, 0.01753011,
+    0.01722402, 0.01693508, 0.01666205, 0.01640413, 0.01615962,
+    0.01592854, 0.01570936, 0.01550188, 0.01530532, 0.01511895,
+    0.01494213, 0.01477475, 0.01461598, 0.01446552, 0.01432309,
+    0.01418842, 0.01406084, 0.01394016, 0.01382637, 0.01371889,
+    0.01361773, 0.01352241, 0.01343293, 0.01334902, 0.01327055,
+    0.0131974, 0.01312934, 0.01306627, 0.01300801, 0.01295457,
+    0.01290579, 0.01286159, 0.01282185, 0.01278657, 0.01275559,
+    0.01272894, 0.01270655, 0.01268837, 0.01267434, 0.01266448,
+    0.01265876, 0.01265716, 0.01265969, 0.01266634, 0.01267712,
+    0.01269205, 0.01271119, 0.01273452, 0.0127621, 0.01279396,
+    0.01283021, 0.01287088, 0.01291604, 0.01296573, 0.0130201,
+    0.0130792, 0.01314323, 0.01321227, 0.01328628, 0.01336573,
+    0.01345047, 0.01354088, 0.01363694, 0.01373909, 0.01384731,
+    0.01396209, 0.01408344, 0.0142117, 0.01434708, 0.01449017,
+    0.01464122, 0.01480027, 0.01496825, 0.01514523, 0.01533177,
+    0.01552847, 0.01573597, 0.01595227, 0.0161667, 0.01637702,
+    0.01658169, 0.01677921, 0.01697564, 0.01718072, 0.01739509,
+    0.0176191, 0.01785332, 0.01809818, 0.01835435, 0.01862179,
+    0.01890154, 0.01919387, 0.01949968, 0.01981963, 0.02015414,
+    0.02050432, 0.02087071, 0.02125426, 0.02165597, 0.02132008,
+    0.02067385, 0.02007156, 0.01950962, 0.01898366, 0.01849131,
+    0.01802902, 0.01759462, 0.01718583, 0.01680059, 0.01643727,
+    0.01609434, 0.01577, 0.0154632, 0.01517259, 0.01489725,
+    0.01463617, 0.01438826, 0.01415308, 0.01392951, 0.01371717,
+    0.0135152, 0.01332305, 0.0131404, 0.01296653, 0.01280099,
+    0.01264354, 0.01249367, 0.01235102, 0.01221531, 0.01208616,
+    0.01196335, 0.01184662, 0.01173571, 0.0116303, 0.0115303,
+    0.01143549, 0.01134566, 0.01126061, 0.01118024, 0.01110434};
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
+{
+
+  float shadows_weight = 2.f + SHADOWS_WEIGHT * 2.f;
+  float highlights_weight = 2.f + HIGHLIGHTS_WEIGHT * 2.f;
+  float midtones_weight = sqf(SHADOWS_WEIGHT) * sqf(HIGHLIGHTS_WEIGHT) / (sqf(SHADOWS_WEIGHT) + sqf(HIGHLIGHTS_WEIGHT));
+
+  float3 rgb = make_float3(p_R, p_G, p_B);
+  float3 XYZ = sRGB_to_XYZ(rgb);
+
+  if (SPACE == 0)
+  {
+    float3 xyY = dt_D65_XYZ_to_xyY(XYZ);
+    float L_white = Y_to_dt_UCS_L_star(1.0f);
+    float3 JCH = xyY_to_dt_UCS_JCH(xyY, L_white);
+    float3 HCB = dt_UCS_JCH_to_HCB(JCH);
+
+    float3 masks = opacity_masks(_powf(HCB.z, 0.4101205819200422f), // center middle grey in 50 %
+                                 shadows_weight, highlights_weight, midtones_weight,
+                                 _powf(MASK_GREY_FULCRUM, 0.4101205819200422f));
+
+    // Linear chroma : distance to achromatic at constant luminance in scene-referred
+    float chroma_boost = _fmaxf(1.f + scalar_product(masks, make_float3(shadows + CHROMA / 2.f, midtones + CHROMA, highlights + CHROMA / 4.f)), 0.f);
+
+    HCB.y *= chroma_boost;
+
+    // Gamut mapping
+    float max_colorfulness = lookup_gamut(gamut_LUT, JCH.z); // WARNING : this is M²
+    float max_chroma = (15.932993652962535f * _powf(JCH.x * L_white, 0.6523997524738018f) * _powf(max_colorfulness, 0.6007557017508491f) / L_white);
+    float3 JCH_gamut_boundary = make_float3(JCH.x, max_chroma, JCH.z);
+    float3 HSB_gamut_boundary = dt_UCS_JCH_to_HSB(JCH_gamut_boundary);
+
+    // // Clip saturation at constant brightness
+    float3 HSB = make_float3(HCB.x, (HCB.z > 0.f) ? HCB.y / HCB.z : 0.f, HCB.z);
+    HSB.y = soft_clip(HSB.y, 0.8f * HSB_gamut_boundary.y, HSB_gamut_boundary.y);
+
+    JCH = dt_UCS_HSB_to_JCH(HSB);
+    xyY = dt_UCS_JCH_to_xyY(JCH, L_white);
+    XYZ = dt_xyY_to_XYZ(xyY);
+  }
+  else
+  {
+    float3 LMS = XYZ_to_LMS(XYZ);
+    float3 Yrg = LMS_to_Yrg(LMS);
+    float4 Ych = Yrg_to_Ych(Yrg);
+
+    Ych.x = _fmaxf(Ych.x, 0.f);
+
+    float3 masks = opacity_masks(_powf(Ych.x, 0.4101205819200422f), // center middle grey in 50 %
+                                 shadows_weight, highlights_weight, midtones_weight,
+                                 _powf(MASK_GREY_FULCRUM, 0.4101205819200422f));
+
+    // Linear chroma : distance to achromatic at constant luminance in scene-referred
+    float chroma_boost = _fmaxf(1.f + scalar_product(masks, make_float3(shadows + CHROMA / 2.f, midtones + CHROMA, highlights + CHROMA / 4.f)), 0.f);
+
+    Ych.y *= chroma_boost;
+
+    Ych = gamut_check_Yrg(Ych);
+    Yrg = Ych_to_Yrg(Ych);
+    LMS = Yrg_to_LMS(Yrg);
+    XYZ = LMS_to_XYZ(LMS);
+  }
+
+  rgb = XYZ_to_sRGB(XYZ);
+
+  return rgb;
+}
