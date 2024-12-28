@@ -1,19 +1,26 @@
 // https://github.com/hotgluebanjo
 // https://github.com/calvinsilly
 
-// 6 hue, 1 wrap, 2 anchor.
-#define N_POINTS 9
+// 8 hue, 1 wrap, 2 anchor.
+#define N_POINTS 11
 
 #define EPS 1e-6f
 
 DEFINE_UI_PARAMS(OVERALL_PIVOT, Pivot, DCTLUI_SLIDER_FLOAT, 0.75, 0.0, 1.0, 0.001)
 DEFINE_UI_PARAMS(OVERALL_VAL, Overall Val, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 3.0, 0.001)
+DEFINE_UI_PARAMS(MIN_SAT, Min Sat, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 0.5, 0.001)
 
 DEFINE_UI_PARAMS(RED_PIVOT, Red Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.001)
 DEFINE_UI_PARAMS(RED_VAL, Red Val, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 3.0, 0.001)
 
+DEFINE_UI_PARAMS(ORA_PIVOT, Orange Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(ORA_VAL, Orange Val, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 3.0, 0.001)
+
 DEFINE_UI_PARAMS(YEL_PIVOT, Yellow Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.001)
 DEFINE_UI_PARAMS(YEL_VAL, Yellow Val, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 3.0, 0.001)
+
+DEFINE_UI_PARAMS(LIM_PIVOT, Lime Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(LIM_VAL, Lime Val, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 3.0, 0.001)
 
 DEFINE_UI_PARAMS(GRN_PIVOT, Green Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.001)
 DEFINE_UI_PARAMS(GRN_VAL, Green Val, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 3.0, 0.001)
@@ -29,264 +36,16 @@ DEFINE_UI_PARAMS(MAG_VAL, Magenta Val, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 3.0, 0.00
 
 DEFINE_UI_PARAMS(INVERT, Invert, DCTLUI_CHECK_BOX, 0)
 
-// XYZ -> sRGB matrix, D65
-__DEVICE__ float3 XYZ_to_sRGB(float3 XYZ)
-{
-  return make_float3(
-     3.1338561f * XYZ.x - 1.6168667f * XYZ.y - 0.4906146f * XYZ.z,
-     -0.9787684f * XYZ.x + 1.9161415f * XYZ.y + 0.0334540f * XYZ.z,
-     0.0719453f * XYZ.x - 0.2289914f * XYZ.y + 1.4052427f * XYZ.z
-  );
+// CONVERSIONS TO OKLAB/OKLCH
+
+__DEVICE__ float cbrtf(float x) {
+	if (x < 0.0f) {
+    x = _fabs(x);
+    return _powf(x, 1.0f / 3.0f) * (-1.0f);
+	} else {
+    return _powf(x, 1.0f / 3.0f);
+  };
 }
-
-
-// sRGB -> XYZ matrix, D65
-__DEVICE__ float3 sRGB_to_XYZ(float3 sRGB)  
-{
-  return make_float3(
-    0.4360747f * sRGB.x + 0.3850649f * sRGB.y + 0.1430804f * sRGB.z,
-    0.2225045f * sRGB.x + 0.7168786f * sRGB.y + 0.0606169f * sRGB.z,
-    0.0139322f * sRGB.x + 0.0971045f * sRGB.y + 0.7141733f * sRGB.z
-  );
-}
-
-// Convert CIE 1931 2° XYZ D65 to CIE 2006 LMS D65 (cone space)
-/*
-* The CIE 1931 XYZ 2° observer D65 is converted to CIE 2006 LMS D65 using the approximation by
-* Richard A. Kirk, Chromaticity coordinates for graphic arts based on CIE 2006 LMS
-* with even spacing of Munsell colours
-* https://doi.org/10.2352/issn.2169-2629.2019.27.38
-*/
-
-__DEVICE__  float3 XYZ_to_LMS(float3 XYZ)
-{
-  return make_float3(
-    0.257085f * XYZ.x + 0.859943f * XYZ.y + -0.031061f * XYZ.z,
-    -0.394427f * XYZ.x + 1.175800f * XYZ.y + 0.106423f * XYZ.z,
-    0.064856f * XYZ.x + -0.076250f * XYZ.y + 0.559067f * XYZ.z
-  );
-}
-
-
-__DEVICE__  float3 LMS_to_XYZ(float3 LMS)
-{
-  return make_float3(
-    1.80794659f * LMS.x + -1.29971660f * LMS.y + 0.34785879f * LMS.z,
-    0.61783960f * LMS.x + 0.39595453f * LMS.y + -0.04104687f * LMS.z,
-    -0.12546960f * LMS.x + 0.20478038f * LMS.y + 1.74274183f * LMS.z
-  );
-}
-
-
-// DARKTABLE UCS
-__DEVICE__ float3 dt_D65_XYZ_to_xyY(float3 sXYZ)
-{
-  // see cpu implementation for details, use D65_xy as fallback
-  float3 XYZ = make_float3(_fmaxf(0.0f, sXYZ.x), _fmaxf(0.0f, sXYZ.y), _fmaxf(0.0f, sXYZ.z));
-  float3 xyY;
-  float sum = XYZ.x + XYZ.y + XYZ.z;
-  if(sum > 0.0f)
-  {
-    xyY.x = XYZ.x / sum;
-    xyY.y = XYZ.y / sum;
-  }
-  else
-  {
-    xyY.x = 0.31271f;
-    xyY.y = 0.32902f;
-  }
-
-  xyY.z = XYZ.y;
-
-  return xyY;
-}
-
-__DEVICE__ float3 dt_xyY_to_XYZ(float3 xyY)
-{
-  // see cpu implementation for details
-  float3 XYZ = make_float3(0.0f, 0.0f, 0.0f);
-  if(xyY.y != 0.0f)
-  {
-    XYZ.x = xyY.z * xyY.x / xyY.y;
-    XYZ.y = xyY.z;
-    XYZ.z = xyY.z * (1.f - xyY.x - xyY.y) / xyY.y;
-  }
-
-  return XYZ;
-}
-
-
-/** The following is darktable Uniform Color Space 2022
- * © Aurélien Pierre
- * https://eng.aurelienpierre.com/2022/02/color-saturation-control-for-the-21th-century/
- *
- * Use this space for color-grading in a perceptual framework.
- * The CAM terms have been removed for performance.
- **/
-#define DT_UCS_L_STAR_RANGE 2.098883786377f
-#define DT_UCS_L_STAR_UPPER_LIMIT 2.09885f
-#define DT_UCS_Y_UPPER_LIMIT 1e8f
-
-__DEVICE__ float Y_to_dt_UCS_L_star(float Y)
-{
-  float Y_hat = _powf(Y, 0.631651345306265f);
-  return DT_UCS_L_STAR_RANGE * Y_hat / (Y_hat + 1.12426773749357f);
-}
-
-__DEVICE__ float dt_UCS_L_star_to_Y(float L_star)
-{
-  return _powf((1.12426773749357f * L_star / (DT_UCS_L_STAR_RANGE - L_star)), 1.5831518565279648f);
-}
-
-__DEVICE__ float2 xyY_to_dt_UCS_UV(float3 xyY)
-{
-  float3 x_factors = make_float3(-0.783941002840055f,  0.745273540913283f, 0.318707282433486f);
-  float3 y_factors = make_float3(0.277512987809202f, -0.205375866083878f, 2.16743692732158f);
-  float3 offsets   = make_float3(0.153836578598858f, -0.165478376301988f, 0.291320554395942f);
-
-  float3 UVD = x_factors * xyY.x + y_factors * xyY.y + offsets;
-  float div = UVD.z >= 0.0f ? _fmaxf(0.0f, UVD.z) : _fminf(-0.0f, UVD.z);
- 
-  UVD.x /= div;
-  UVD.y /= div;
-
-  float2 factors     = make_float2(1.39656225667f, 1.4513954287f);
-  float2 half_values = make_float2(1.49217352929f, 1.52488637914f);
-  float2 UV_star =     make_float2(factors.x * UVD.x / (_fabs(UVD.x) + half_values.x), factors.y * UVD.y / (_fabs(UVD.y) + half_values.y));
-  // The following is equivalent to a 2D matrix product
-
-  float2 UV_star_prime =  make_float2(-1.124983854323892f * UV_star.x - 0.980483721769325f * UV_star.y, 1.86323315098672f * UV_star.x + 1.971853092390862f * UV_star.y);
-  return UV_star_prime;
-}
-
-__DEVICE__ float3 xyY_to_dt_UCS_JCH(float3 xyY, float L_white)
-{
-  /*
-    input :
-      * xyY in normalized CIE XYZ for the 2° 1931 observer adapted for D65
-      * L_white the lightness of white as dt UCS L* lightness
-      * cz = 1 for standard pre-print proofing conditions with average surround and n = 20 %
-              (background = middle grey, white = perfect diffuse white)
-    range : xy in [0; 1], Y normalized for perfect diffuse white = 1
-  */
-
-  float2 UV_star_prime = xyY_to_dt_UCS_UV(xyY);
-
-  // Y upper limit is calculated from the L star upper limit.
-  float L_star = Y_to_dt_UCS_L_star(_clampf(xyY.z, 0.f, DT_UCS_Y_UPPER_LIMIT));
-  float M2 = UV_star_prime.x * UV_star_prime.x + UV_star_prime.y * UV_star_prime.y; // square of colorfulness M
-
-  // should be JCH[0] = powf(L_star / L_white), cz) but we treat only the case where cz = 1
-  float3 JCH = make_float3(L_star / L_white,
-                        15.932993652962535f * _powf(L_star, 0.6523997524738018f) * _powf(M2, 0.6007557017508491f) / L_white,
-                        _atan2f(UV_star_prime.y, UV_star_prime.x));
-  return JCH;
-}
-
-__DEVICE__ float3 dt_UCS_JCH_to_xyY(float3 JCH, float L_white)
-{
-  /*
-    input :
-      * xyY in normalized CIE XYZ for the 2° 1931 observer adapted for D65
-      * L_white the lightness of white as dt UCS L* lightness
-      * cz = 1 for standard pre-print proofing conditions with average surround and n = 20 %
-              (background = middle grey, white = perfect diffuse white)
-    range : xy in [0; 1], Y normalized for perfect diffuse white = 1
-  */
-
-  // should be L_star = powf(JCH[0], 1.f / cz) * L_white but we treat only the case where cz = 1
-  // L_star upper limit is 2.098883786377 truncated to 32-bit float and last decimal removed.
-  // By clipping L_star to this limit, we ensure dt_UCS_L_star_to_Y() doesn't divide by zero.
-  // Instead of using above theoretical values we use some modified versions
-  // that not avoid div-by-zero but div-by-close-to-zero
-  // this leads to more stability for extremely bright parts as we avoid single float precision overflows
-  float L_star = _clampf(JCH.x * L_white, 0.f, DT_UCS_L_STAR_UPPER_LIMIT);
-  float M = L_star != 0.f
-    ? _powf(JCH.y * L_white / (15.932993652962535f * _powf(L_star, 0.6523997524738018f)), 0.8322850678616855f)
-    : 0.f;
-
-  float U_star_prime = M * _cosf(JCH.z);
-  float V_star_prime = M * _sinf(JCH.z);
-
-  // The following is equivalent to a 2D matrix product
-  float2 UV_star = make_float2(-5.037522385190711f * U_star_prime - 2.504856328185843f * V_star_prime,
-                            4.760029407436461f * U_star_prime + 2.874012963239247f * V_star_prime);
-
-  float2 factors     = make_float2(1.39656225667f, 1.4513954287f);
-  float2 half_values = make_float2(1.49217352929f,1.52488637914f);
-  float2 UV = make_float2(-half_values.x * UV_star.x / (_fabs(UV_star.x) - factors.x),
-                      -half_values.y * UV_star.y / (_fabs(UV_star.y) - factors.y));
-
-  float3 U_factors = make_float3(0.167171472114775f,   -0.150959086409163f,    0.940254742367256f);
-  float3 V_factors = make_float3(0.141299802443708f,   -0.155185060382272f,    1.000000000000000f);
-  float3 offsets   = make_float3(-0.00801531300850582f, -0.00843312433578007f, -0.0256325967652889f);
-
-  float3 xyD = U_factors * UV.x + V_factors * UV.y + offsets;
-
-  float div = (xyD.z >= 0.0f) ? _fmaxf(0.0f, xyD.z) : _fminf(-0.0f, xyD.z);
-  float3 xyY = make_float3(xyD.x / div, xyD.y / div, dt_UCS_L_star_to_Y(L_star));
-  return xyY;
-}
-
-
-__DEVICE__ float3 dt_UCS_JCH_to_HSB(float3 JCH)
-{
-  float3 HSB;
-  HSB.z = JCH.x * (_powf(JCH.y, 1.33654221029386f) + 1.f);
-  HSB.y = (HSB.z > 0.f) ? JCH.y / HSB.z : 0.f;
-  HSB.x = JCH.z;
-  return HSB;
-}
-
-
-__DEVICE__ float3 dt_UCS_HSB_to_JCH(float3 HSB)
-{
-  float3 JCH;
-  JCH.z = HSB.x;
-  JCH.y = HSB.y * HSB.z;
-  JCH.x = HSB.z / (_powf(JCH.y, 1.33654221029386f) + 1.f);
-  return JCH;
-}
-
-
-__DEVICE__ float3 dt_UCS_JCH_to_HCB(float3 JCH)
-{
-  float3 HCB;
-  HCB.z = JCH.x * (_powf(JCH.y, 1.33654221029386f) + 1.f);
-  HCB.y = JCH.y;
-  HCB.x = JCH.z;
-  return HCB;
-}
-
-
-__DEVICE__ float3 dt_UCS_HCB_to_JCH(float3 HCB)
-{
-  float3 JCH;
-  JCH.z = HCB.x;
-  JCH.y = HCB.y;
-  JCH.x = HCB.z / (_powf(HCB.y, 1.33654221029386f) + 1.f);
-  return JCH;
-}
-
-__DEVICE__ float3 dt_UCS_LUV_to_JCH(float L_star, float L_white, float2 UV_star_prime)
-{
-  float M2 = UV_star_prime.x * UV_star_prime.x + UV_star_prime.y * UV_star_prime.y; // square of colorfulness M
-  float3 JCH = make_float3(L_star / L_white,
-                        15.932993652962535f * _powf(L_star, 0.6523997524738018f) * _powf(M2, 0.6007557017508491f) / L_white,
-                        _atan2f(UV_star_prime.y, UV_star_prime.x));
-  return JCH;
- }
-
-__DEVICE__ float soft_clip(float x, float soft_threshold, float hard_threshold)
-{
-  // use an exponential soft clipping above soft_threshold
-  // hard threshold must be > soft threshold
-  float norm = hard_threshold - soft_threshold;
-  return (x > soft_threshold) ? soft_threshold + (1.f - _expf(-(x - soft_threshold) / norm)) * norm : x;
-}
-
-
-
 
 __DEVICE__ float from_radians(float c) {
   float pi = 3.14159265359f;
@@ -298,6 +57,84 @@ __DEVICE__ float to_radians(float c) {
   return c * (180.f / pi);
 }
 
+__DEVICE__ float3 mod_oklch_to_oklab(float3 c) {
+  // Unset Hue 0 from HSV Red
+  c.z = c.z + 0.0812052366f;
+
+  if (c.z < 0.f) {
+    c.z = c.z + 1.f;
+  }
+
+  if (c.z > 1.f) {
+    c.z = c.z - 1.f;
+  }
+
+  // Normalize Hue 0-360
+  c.z = c.z * 360.f;
+	return make_float3(c.x, c.y * cos(from_radians(c.z)), c.y * sin(from_radians(c.z)));
+}
+
+__DEVICE__ float3 oklab_to_mod_oklch(float3 c) {
+  float3 lch = make_float3(c.x, _sqrtf((c.y * c.y) + (c.z * c.z)), to_radians(_atan2f(c.z, c.y)));
+  // Normalize Hue 0-1
+  lch.z = lch.z * (1/360.f);
+  
+  // Set Hue 0 to HSV Red
+  lch.z = lch.z - 0.0812052366f;
+
+  if (lch.z < 0.f) {
+    lch.z = lch.z + 1.f;
+  }
+
+  if (lch.z > 1.f) {
+    lch.z = lch.z - 1.f;
+  }
+
+  return lch;
+}
+
+__DEVICE__ float3 linear_srgb_to_oklab(float3 c) 
+{
+  float l = 0.4122214708f * c.x + 0.5363325363f * c.y + 0.0514459929f * c.z;
+	float m = 0.2119034982f * c.x + 0.6806995451f * c.y + 0.1073969566f * c.z;
+	float s = 0.0883024619f * c.x + 0.2817188376f * c.y + 0.6299787005f * c.z;
+
+  float l_ = cbrtf(l);
+  float m_ = cbrtf(m);
+  float s_ = cbrtf(s);
+
+  return make_float3(
+      0.2104542553f*l_ + 0.7936177850f*m_ - 0.0040720468f*s_,
+      1.9779984951f*l_ - 2.4285922050f*m_ + 0.4505937099f*s_,
+      0.0259040371f*l_ + 0.7827717662f*m_ - 0.8086757660f*s_
+  );
+}
+
+__DEVICE__ float3 oklab_to_linear_srgb(float3 c) 
+{
+    float l_ = c.x + 0.3963377774f * c.y + 0.2158037573f * c.z;
+    float m_ = c.x - 0.1055613458f * c.y - 0.0638541728f * c.z;
+    float s_ = c.x - 0.0894841775f * c.y - 1.2914855480f * c.z;
+
+    float l = l_*l_*l_;
+    float m = m_*m_*m_;
+    float s = s_*s_*s_;
+
+    return make_float3(
+		+4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s,
+		-1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s,
+		-0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s
+    );
+}
+
+// LCH CONTROLS
+
+__DEVICE__ inline float spow(float x, float p) {
+    if (x < 0.0f) {
+        return -_powf(-x, p);
+    }
+    return _powf(x, p);
+}
 
 __DEVICE__ inline float saturate(float x, float minVal = 0.0f, float maxVal = 1.0f) {
   return _fminf(_fmaxf(x, minVal), maxVal);
@@ -328,20 +165,25 @@ __DEVICE__ float interp_linear(__PRIVATE__ float2 *pts, int n_pts, float x) {
     return _mix(pts[i].y, pts[i + 1].y, t);
 }
 
+__DEVICE__ float cross_mult(float primary, float secondary_1, float secondary_2) {
+  return 0.5f * primary + 0.25f * secondary_1 + 0.25f * secondary_2;
+}
+
+__DEVICE__ float cross_mult_edge(float primary, float secondary_1) {
+  return 0.75f * primary + 0.25f * secondary_1;
+}
+
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
 	
 	float3 rgb = make_float3(p_R, p_G, p_B);
-  float3 XYZ = sRGB_to_XYZ(rgb);
-  float3 xyY = dt_D65_XYZ_to_xyY(XYZ);
-  float L_white = Y_to_dt_UCS_L_star(1.0f);
-  float3 JCH = xyY_to_dt_UCS_JCH(xyY, L_white);
-  float3 HCB = dt_UCS_JCH_to_HCB(JCH);
+  rgb = oklab_to_mod_oklch(linear_srgb_to_oklab(rgb));
+  float hue = rgb.z;
+  float sat = rgb.y;
+  float val = rgb.x;
 
-  float hue = HCB.x;
-  float sat = HCB.y;
-  float val = HCB.z;
-
+  float ORA_HUE_BIAS = 0.1118546484f;
   float YEL_HUE_BIAS = 0.2237092969f;
+  float LIM_HUE_BIAS = 0.2691622230f;
   float GRN_HUE_BIAS = 0.3146151491f;
   float CYN_HUE_BIAS = 0.4598225411f;
   float BLU_HUE_BIAS = 0.6522753414f;
@@ -349,9 +191,11 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
   float2 pivot_curve[N_POINTS] = {
     {MAG_HUE_BIAS - 1.0f, MAG_PIVOT},
-    {0.0f,                RED_PIVOT},
-    {YEL_HUE_BIAS,        YEL_PIVOT},
-    {GRN_HUE_BIAS,        GRN_PIVOT},
+    {0.0f,                cross_mult_edge(RED_PIVOT, ORA_PIVOT)},
+    {ORA_HUE_BIAS,        cross_mult(ORA_PIVOT, RED_PIVOT, YEL_PIVOT)},
+    {YEL_HUE_BIAS,        cross_mult(YEL_PIVOT, ORA_PIVOT, LIM_PIVOT)},
+    {LIM_HUE_BIAS,        cross_mult(LIM_PIVOT, YEL_PIVOT, GRN_PIVOT)},
+    {GRN_HUE_BIAS,        cross_mult_edge(GRN_PIVOT, LIM_PIVOT)},
     {CYN_HUE_BIAS,        CYN_PIVOT},
     {BLU_HUE_BIAS,        BLU_PIVOT},
     {MAG_HUE_BIAS,        MAG_PIVOT},
@@ -359,11 +203,14 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     {YEL_HUE_BIAS + 1.0f, YEL_PIVOT}
   };
 
+
   float2 val_curve[N_POINTS] = {
     {MAG_HUE_BIAS - 1.0f, MAG_VAL},
-    {0.0f,                RED_VAL},
-    {YEL_HUE_BIAS,        YEL_VAL},
-    {GRN_HUE_BIAS,        GRN_VAL},
+    {0.0f,                cross_mult_edge(RED_VAL, ORA_VAL)},
+    {ORA_HUE_BIAS,        cross_mult(ORA_VAL, RED_VAL, YEL_VAL)},
+    {YEL_HUE_BIAS,        cross_mult(YEL_VAL, ORA_VAL, LIM_VAL)},
+    {LIM_HUE_BIAS,        cross_mult(LIM_VAL, YEL_VAL, GRN_VAL)},
+    {GRN_HUE_BIAS,        cross_mult_edge(GRN_VAL, LIM_VAL)},
     {CYN_HUE_BIAS,        CYN_VAL},
     {BLU_HUE_BIAS,        BLU_VAL},
     {MAG_HUE_BIAS,        MAG_VAL},
@@ -375,7 +222,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
   float val_factor = interp_linear(val_curve, N_POINTS, hue) + OVERALL_VAL;
   float val_weighting = 8.0 * (-val + pivot_factor);
 
-  val_factor = _fmaxf(1.0f + sat * val_factor * val_weighting, EPS);
+  val_factor = _fmaxf(1.0f + _fmaxf(sat - MIN_SAT, 0.f) * val_factor * val_weighting, EPS);
   float val_result;
 
   if (INVERT) {
@@ -384,12 +231,8 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
       val_result = val * spow(val_factor, val);
   }
 
-  HCB = make_float3(hue, sat, val_result);
-  JCH = dt_UCS_HCB_to_JCH(HCB);
-  xyY = dt_UCS_JCH_to_xyY(JCH, L_white);
-  XYZ = dt_xyY_to_XYZ(xyY);
-
-  rgb = XYZ_to_sRGB(XYZ);
+  rgb = mod_oklch_to_oklab(make_float3(val_result, sat, hue));
+  rgb = oklab_to_linear_srgb(rgb);
 
 	return rgb;
 }
