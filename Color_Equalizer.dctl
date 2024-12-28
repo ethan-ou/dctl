@@ -1,10 +1,49 @@
-#define M_PI_F 3.14159265358979323846f
+#define NODES 10
 #define FLT_MIN 1.175494e-38
 
-DEFINE_UI_PARAMS(CHROMA, Global Saturation, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 2.0, 0.001)
-DEFINE_UI_PARAMS(SHADOWS, Shadows, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 2.0, 0.001)
-DEFINE_UI_PARAMS(MIDTONES, Midtones, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 2.0, 0.001)
-DEFINE_UI_PARAMS(HIGHLIGHTS, Highlights, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 2.0, 0.001)
+#define SAT_EFFECT 2.0f
+#define BRIGHT_EFFECT 8.0f
+#define M_PI_F 3.14159265358979323846f
+
+DEFINE_UI_PARAMS(RED_HUE, Red Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(RED_SAT, Red Sat, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(RED_BRI, Red Bright, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+
+DEFINE_UI_PARAMS(ORA_HUE, Orange Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(ORA_SAT, Orange Sat, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(ORA_BRI, Orange Bright, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+
+DEFINE_UI_PARAMS(YEL_HUE, Yellow Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(YEL_SAT, Yellow Sat, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(YEL_BRI, Yellow Bright, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+
+DEFINE_UI_PARAMS(GRN_HUE, Green Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(GRN_SAT, Green Sat, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(GRN_BRI, Green Bright, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+
+DEFINE_UI_PARAMS(CYN_HUE, Cyan Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(CYN_SAT, Cyan Sat, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(CYN_BRI, Cyan Bright, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+
+DEFINE_UI_PARAMS(LBL_HUE, Light Blue Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(LBL_SAT, Light Blue Sat, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(LBL_BRI, Light Blue Bright, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+
+DEFINE_UI_PARAMS(MBL_HUE, Mid Blue Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(MBL_SAT, Mid Blue Sat, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(MBL_BRI, Mid Blue Bright, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+
+DEFINE_UI_PARAMS(BLU_HUE, Blue Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(BLU_SAT, Blue Sat, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(BLU_BRI, Blue Bright, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+
+DEFINE_UI_PARAMS(PUR_HUE, Purple Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(PUR_SAT, Purple Sat, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(PUR_BRI, Purple Bright, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+
+DEFINE_UI_PARAMS(MAG_HUE, Magenta Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(MAG_SAT, Magenta Sat, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(MAG_BRI, Magenta Bright, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
 
 // XYZ -> sRGB matrix, D65
 __DEVICE__ float3 XYZ_to_sRGB(float3 XYZ)
@@ -338,66 +377,112 @@ __DEVICE__ float lookup_gamut(float *gamut_lut, float x)
   return y_prev + ((xi != xii) ? (x_test - x_prev) * (gamut_lut[xii] - y_prev) : 0.0f);
 }
 
-#define MASK_GREY_FULCRUM 0.1845f
-#define SHADOWS_WEIGHT 1.f
-#define HIGHLIGHTS_WEIGHT 1.0f
-
-__DEVICE__ float3 opacity_masks(float x, float shadows_weight, float highlights_weight, float midtones_weight, float mask_grey_fulcrum)
+// sRGB primary red records at 20° of hue in darktable UCS 22, so we offset the whole hue range
+// such that red is the origin hues in the GUI. This is consistent with HSV/HSL color wheels UI.
+#define ANGLE_SHIFT +20.f
+__DEVICE__ static inline float _rad_correction(const float angle)
 {
-  float x_offset = (x - mask_grey_fulcrum);
-  float x_offset_norm = x_offset / mask_grey_fulcrum;
-  float alpha = 1.f / (1.f + _expf(x_offset_norm * shadows_weight));    // opacity of shadows
-  float beta = 1.f / (1.f + _expf(-x_offset_norm * highlights_weight)); // opacity of highlights
-  float alpha_comp = 1.f - alpha;
-  float beta_comp = 1.f - beta;
-  float gamma = _expf(-sqf(x_offset) * midtones_weight / 4.f) * sqf(alpha_comp) * sqf(beta_comp) * 8.f; // opacity of midtones
-  float gamma_comp = 1.f - gamma;
-
-  return make_float3(alpha, gamma, beta);
+  return angle - ANGLE_SHIFT * ((2.f * M_PI_F) / 360.f);
 }
 
-__DEVICE__ float scalar_product(float3 v1, float3 v2)
+__DEVICE__ static inline float sinc(float x)
 {
-  float acc = 0.f;
-  acc += v1.x * v2.x;
-  acc += v1.y * v2.y;
-  acc += v1.z * v2.z;
+  x = _fabs(x) + FLT_MIN; // add a tiny amount to avoid divide by zero
+  return _sinf(x) / x;
+}
 
-  return acc;
+__DEVICE__ static inline float interp_trig(__PRIVATE__ float *pts, float x)
+{
+  // Interpolate x between N nodes evenly spaced
+  // N needs to be even
+  // p are the user-defined parameters for the radial coordinate of the nodes
+  int N = NODES;
+  float result = 0.f;
+  float step = 2.f * M_PI_F / (float)N;
+  int i = 0;
+  for (; i < N; i++)
+  {
+    float X = 0.5 * (x - (step * i));
+    float D = sinc((float)N * X) * _cosf(X) / sinc(X);
+    result += D * pts[i];
+  }
+
+  return result;
+}
+
+__DEVICE__ static inline float gamut_map_HSB(const float3 HSB, float *gamut_LUT, const float L_white)
+{
+  const float3 JCH = dt_UCS_HSB_to_JCH(HSB);
+  const float max_colorfulness = lookup_gamut(gamut_LUT, JCH.z);
+  const float max_chroma = 15.932993652962535f * _powf(JCH.x * L_white, 0.6523997524738018f) * _powf(max_colorfulness, 0.6007557017508491f) / L_white;
+  const float3 JCH_gamut_boundary = make_float3(JCH.x, max_chroma, JCH.z);
+  const float3 HSB_gamut_boundary = dt_UCS_JCH_to_HSB(JCH_gamut_boundary);
+
+  // Soft-clip the current pixel saturation at constant brightness
+  return soft_clip(HSB.y, 0.8f * HSB_gamut_boundary.y, HSB_gamut_boundary.y);
 }
 
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
 {
+  float hue_values[NODES] = {
+      RED_HUE,
+      ORA_HUE,
+      YEL_HUE,
+      GRN_HUE,
+      CYN_HUE,
+      LBL_HUE,
+      MBL_HUE,
+      BLU_HUE,
+      PUR_HUE,
+      MAG_HUE,
+  };
 
-  float shadows_weight = 2.f + SHADOWS_WEIGHT * 2.f;
-  float highlights_weight = 2.f + HIGHLIGHTS_WEIGHT * 2.f;
-  float midtones_weight = sqf(SHADOWS_WEIGHT) * sqf(HIGHLIGHTS_WEIGHT) / (sqf(SHADOWS_WEIGHT) + sqf(HIGHLIGHTS_WEIGHT));
+  float sat_values[NODES] = {
+      RED_SAT,
+      ORA_SAT,
+      YEL_SAT,
+      GRN_SAT,
+      CYN_SAT,
+      LBL_SAT,
+      MBL_SAT,
+      BLU_SAT,
+      PUR_SAT,
+      MAG_SAT,
+  };
+
+  float bri_values[NODES] = {
+      RED_BRI,
+      ORA_BRI,
+      YEL_BRI,
+      GRN_BRI,
+      CYN_BRI,
+      LBL_BRI,
+      MBL_BRI,
+      BLU_BRI,
+      PUR_BRI,
+      MAG_BRI,
+  };
 
   float3 rgb = make_float3(p_R, p_G, p_B);
   float3 XYZ = sRGB_to_XYZ(rgb);
 
   float3 xyY = dt_D65_XYZ_to_xyY(XYZ);
-  float L_white = Y_to_dt_UCS_L_star(1.0f);
+  float L_white = Y_to_dt_UCS_L_star(xyY.z);
   float3 JCH = xyY_to_dt_UCS_JCH(xyY, L_white);
   float3 HSB = dt_UCS_JCH_to_HSB(JCH);
 
-  float3 masks = opacity_masks(_powf(HSB.z, 0.4101205819200422f), // center middle grey in 50 %
-                               shadows_weight, highlights_weight, midtones_weight,
-                               _powf(MASK_GREY_FULCRUM, 0.4101205819200422f));
+  float hue_correction = interp_trig(hue_values, _rad_correction(HSB.x));
+  float sat_correction = interp_trig(sat_values, _rad_correction(HSB.x));
+  float bri_correction = HSB.y * (interp_trig(bri_values, _rad_correction(HSB.x)) - 1.0f);
 
-  // Linear chroma : distance to achromatic at constant luminance in scene-referred
-  float chroma_boost = _fmaxf(1.f + scalar_product(masks, make_float3(SHADOWS + CHROMA / 2.f, MIDTONES + CHROMA, HIGHLIGHTS + CHROMA / 4.f)), 0.f);
+  // Apply the corrections
+  HSB.x += hue_correction;
+  // HSB.y (saturation) and HSB.z (brightness) are gains
+  HSB.y = _fmaxf(0.0f, HSB.y * (1.0f + SAT_EFFECT * (sat_correction - 1.0f)));
+  HSB.z = _fmaxf(0.0f, HSB.z * (1.0f + BRIGHT_EFFECT * bri_correction));
 
-  HSB.y *= chroma_boost;
-
-  // Gamut mapping
-  float max_colorfulness = lookup_gamut(gamut_LUT, JCH.z); // WARNING : this is M²
-  float max_chroma = (15.932993652962535f * _powf(JCH.x * L_white, 0.6523997524738018f) * _powf(max_colorfulness, 0.6007557017508491f) / L_white);
-  float3 JCH_gamut_boundary = make_float3(JCH.x, max_chroma, JCH.z);
-  float3 HSB_gamut_boundary = dt_UCS_JCH_to_HSB(JCH_gamut_boundary);
-
-  // // Clip saturation at constant brightness
-  HSB.y = soft_clip(HSB.y, 0.8f * HSB_gamut_boundary.y, HSB_gamut_boundary.y);
+  // Sanitize gamut
+  HSB.y = gamut_map_HSB(HSB, gamut_LUT, L_white);
 
   JCH = dt_UCS_HSB_to_JCH(HSB);
   xyY = dt_UCS_JCH_to_xyY(JCH, L_white);
