@@ -1,0 +1,167 @@
+// MIT License
+
+// Copyright (c) 2021 calvinsilly, Ember Light, Nick Eason
+
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+DEFINE_UI_PARAMS(red_val, Red - Value, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(red_pow, Red - Power, DCTLUI_SLIDER_FLOAT, 0.25, 0.001, 1.0, 0.001)
+DEFINE_UI_PARAMS(red_bias, Red - Bias, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 2.0, 0.001)
+
+DEFINE_UI_PARAMS(grn_val, Green - Value, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(grn_pow, Green - Power, DCTLUI_SLIDER_FLOAT, 0.25, 0.001, 1.0, 0.001)
+DEFINE_UI_PARAMS(grn_bias, Green - Bias, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 2.0, 0.001)
+
+DEFINE_UI_PARAMS(blu_val, Blue - Value, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(blu_pow, Blue - Power, DCTLUI_SLIDER_FLOAT, 0.25, 0.001, 1.0, 0.001)
+DEFINE_UI_PARAMS(blu_bias, Blue - Bias, DCTLUI_SLIDER_FLOAT, 0.25, 0.0, 2.0, 0.001)
+
+DEFINE_UI_PARAMS(cyn_val, Cyan - Value, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(cyn_pow, Cyan - Power, DCTLUI_SLIDER_FLOAT, 0.25, 0.001, 1.0, 0.001)
+DEFINE_UI_PARAMS(cyn_bias, Cyan - Bias, DCTLUI_SLIDER_FLOAT, 0.75, 0.0, 2.0, 0.001)
+
+DEFINE_UI_PARAMS(mag_val, Mag - Value, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(mag_pow, Mag - Power, DCTLUI_SLIDER_FLOAT, 0.25, 0.001, 1.0, 0.001)
+DEFINE_UI_PARAMS(mag_bias, Mag - Bias, DCTLUI_SLIDER_FLOAT, 0.75, 0.0, 2.0, 0.001)
+
+DEFINE_UI_PARAMS(yel_val, Yel - Value, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(yel_pow, Yel - Power, DCTLUI_SLIDER_FLOAT, 0.25, 0.001, 1.0, 0.001)
+DEFINE_UI_PARAMS(yel_bias, Yel - Bias, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+
+__DEVICE__ static inline float float_pow(float x, float3 set)
+{
+    // Value is negative since it's a reduction in value
+    float val = -set.x;
+    float pow = set.y;
+    // Bias adds value back to the image to avoid it getting too dark
+    float bias = set.z;
+
+    // Using a power compresses value adjustments. The brighter the image
+    // the more that the value is removed from the image.
+    // Note: force values to be above 0.0 to avoid errors.
+    float amount = _fmaxf(0.0f, _powf(x, pow)) * val;
+
+    return -bias * val + amount;
+}
+
+__DEVICE__ static inline float3 make_red(float x)
+{
+    return make_float3(x + 1.0f, x, x);
+}
+
+__DEVICE__ static inline float3 make_grn(float x)
+{
+    return make_float3(x, x + 1.0f, x);
+}
+
+__DEVICE__ static inline float3 make_blu(float x)
+{
+    return make_float3(x, x, x + 1.0f);
+}
+
+__DEVICE__ static inline float3 make_cyn(float x)
+{
+    return make_float3(x, x + 1.0f, x + 1.0f);
+}
+
+__DEVICE__ static inline float3 make_mag(float x)
+{
+    return make_float3(x + 1.0f, x, x + 1.0f);
+}
+
+__DEVICE__ static inline float3 make_yel(float x)
+{
+    return make_float3(x + 1.0f, x + 1.0f, x);
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
+{
+    float3 rgb = make_float3(p_R, p_G, p_B);
+    float3 wht = make_float3(1.f, 1.f, 1.f);
+
+    float3 red_set = make_float3(red_val, red_pow, red_bias);
+    float3 grn_set = make_float3(grn_val, grn_pow, grn_bias);
+    float3 blu_set = make_float3(blu_val, blu_pow, blu_bias);
+    float3 cyn_set = make_float3(cyn_val, cyn_pow, cyn_bias);
+    float3 mag_set = make_float3(mag_val, mag_pow, mag_bias);
+    float3 yel_set = make_float3(yel_val, yel_pow, yel_bias);
+
+    if (rgb.x > rgb.y)
+    {
+        if (rgb.y > rgb.z)
+        {
+            float3 red_x = make_red(float_pow(rgb.x, red_set));
+            float3 red_y = make_red(float_pow(rgb.y, red_set));
+            float3 yel_y = make_yel(float_pow(rgb.y, yel_set));
+            float3 yel_z = make_yel(float_pow(rgb.z, yel_set));
+
+            rgb = rgb.x * (red_x) + rgb.y * (yel_y - red_y) + rgb.z * (wht - yel_z);
+        }
+        else if (rgb.x > rgb.z)
+        {
+            float3 red_x = make_red(float_pow(rgb.x, red_set));
+            float3 red_z = make_red(float_pow(rgb.z, red_set));
+            float3 mag_y = make_mag(float_pow(rgb.y, mag_set));
+            float3 mag_z = make_mag(float_pow(rgb.z, mag_set));
+
+            rgb = rgb.x * (red_x) + rgb.y * (wht - mag_y) + rgb.z * (mag_z - red_z);
+        }
+        else
+        {
+            float3 mag_x = make_mag(float_pow(rgb.x, mag_set));
+            float3 mag_y = make_mag(float_pow(rgb.y, mag_set));
+            float3 blu_x = make_blu(float_pow(rgb.x, blu_set));
+            float3 blu_z = make_blu(float_pow(rgb.z, blu_set));
+
+            rgb = rgb.x * (mag_x - blu_x) + rgb.y * (wht - mag_y) + rgb.z * (blu_z);
+        }
+    }
+    else
+    {
+        if (rgb.z > rgb.y)
+        {
+            float3 cyn_x = make_cyn(float_pow(rgb.x, cyn_set));
+            float3 cyn_y = make_cyn(float_pow(rgb.y, cyn_set));
+            float3 blu_y = make_blu(float_pow(rgb.y, blu_set));
+            float3 blu_z = make_blu(float_pow(rgb.z, blu_set));
+
+            rgb = rgb.x * (wht - cyn_x) + rgb.y * (cyn_y - blu_y) + rgb.z * (blu_z);
+        }
+        else if (rgb.z > rgb.x)
+        {
+            float3 cyn_x = make_cyn(float_pow(rgb.x, cyn_set));
+            float3 cyn_z = make_cyn(float_pow(rgb.z, cyn_set));
+            float3 grn_y = make_grn(float_pow(rgb.y, grn_set));
+            float3 grn_z = make_grn(float_pow(rgb.z, grn_set));
+
+            rgb = rgb.x * (wht - cyn_x) + rgb.y * (grn_y) + rgb.z * (cyn_z - grn_z);
+        }
+        else
+        {
+            float3 yel_x = make_yel(float_pow(rgb.x, yel_set));
+            float3 yel_z = make_yel(float_pow(rgb.z, yel_set));
+            float3 grn_x = make_grn(float_pow(rgb.x, grn_set));
+            float3 grn_y = make_grn(float_pow(rgb.y, grn_set));
+
+            rgb = rgb.x * (yel_x - grn_x) + rgb.y * (grn_y) + rgb.z * (wht - yel_z);
+        }
+    }
+
+    return rgb;
+}
